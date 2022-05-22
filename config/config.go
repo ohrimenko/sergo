@@ -2,11 +2,10 @@ package config
 
 import "os"
 
-type data struct{}
+type Config struct{}
 
-var Config data
+var App Config
 
-// Config func to get env value
 func Env(key string) string {
 	return os.Getenv(key)
 }
