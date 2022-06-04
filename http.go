@@ -6,12 +6,10 @@ import (
 
 	"github.com/ohrimenko/sergo/components"
 	"github.com/ohrimenko/sergo/config"
-	"github.com/ohrimenko/sergo/models"
 	"github.com/ohrimenko/sergo/routes"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/encryptcookie"
-	"github.com/gofiber/fiber/v2/middleware/favicon"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/gofiber/utils"
 	"github.com/joho/godotenv"
@@ -19,11 +17,15 @@ import (
 	"github.com/gofiber/template/html"
 
 	"github.com/goccy/go-json"
+
+	"math/rand"
 )
 
 var FiberApp *fiber.App
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
+
 	components.InitSerialize()
 
 	// .env Variables validation
@@ -36,6 +38,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	defer components.CloseDB()
 
 	engine := html.New("./views", ".html")
 
@@ -51,17 +55,13 @@ func main() {
 	// Delims sets the action delimiters to the specified strings
 	engine.Delims("{{", "}}") // Optional. Default: engine delimiters
 
-	engine.AddFunc("isAdmin", func(name models.User) bool {
-		return true
-	})
-
 	// Fiber instance
 	FiberApp = fiber.New(fiber.Config{
 		Prefork:       true,
 		CaseSensitive: true,
 		StrictRouting: true,
-		ServerHeader:  "Sergo",
-		AppName:       "Sergo App v1.0.1",
+		ServerHeader:  "Server-Http",
+		AppName:       "Server-Http App v1.0.1",
 		Views:         engine,
 		JSONEncoder:   json.Marshal,
 		JSONDecoder:   json.Unmarshal,
@@ -69,32 +69,14 @@ func main() {
 
 	components.FiberApp = FiberApp
 
-	// Сжатие
-	//FiberApp.Use(compress.New(compress.Config{
-	//	Level: compress.LevelBestSpeed, // 1
-	//}))
-
 	FiberApp.Use(encryptcookie.New(encryptcookie.Config{
 		Key: config.Env("APP_KEY"),
-	}))
-
-	FiberApp.Use(favicon.New(favicon.Config{
-		File: "./public/favicon.ico",
 	}))
 
 	FiberApp.Use(requestid.New(requestid.Config{
 		Header:    "X-Custom-Header",
 		Generator: utils.UUID,
 	}))
-
-	FiberApp.Static("/static", "./public", fiber.Static{
-		Compress:      true,
-		ByteRange:     true,
-		Browse:        true,
-		Index:         "index.html",
-		CacheDuration: 10 * time.Second,
-		MaxAge:        3600,
-	})
 
 	// Routes
 	routes.App.Http(FiberApp)

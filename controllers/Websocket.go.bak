@@ -1,0 +1,205 @@
+package controllers
+
+import (
+	"log"
+	"math/rand"
+
+	"github.com/gofiber/websocket/v2"
+)
+
+type ClientsStack struct {
+	Clients map[uint64]*WebsocketClient
+}
+
+type WebsocketStack struct {
+	Ws         *Websocket
+	Register   chan *WebsocketClient
+	Broadcast  chan *RequestWebsocket
+	Unregister chan *WebsocketClient
+	Count      uint64
+	Increment  uint64
+	Key        uint64
+}
+
+type Websocket struct {
+	Stack           map[uint64]*WebsocketStack
+	Key             uint64
+	MaxCountInStack uint64
+	Increment       uint64
+}
+
+func (stack *ClientsStack) DeleteClient(id uint64) {
+	if _, ok := stack.Clients[id]; ok {
+		delete(stack.Clients, id)
+	}
+}
+
+func (ws *Websocket) DeleteStack(key uint64) {
+	if _, ok := ws.Stack[key]; ok {
+		delete(ws.Stack, key)
+	}
+}
+
+func (wsStack *WebsocketStack) Increment() {
+}
+
+func (wsStack *WebsocketStack) Decrement() {
+}
+
+func (wsStack *WebsocketStack) Delete() {
+	if wsStack.Ws != nil {
+		wsStack.Ws.DeleteStack(wsStack.Key)
+	}
+}
+
+func NewWebsocket(maxConnect uint64) *Websocket {
+	ws := &Websocket{
+		Stack:           map[uint64]*WebsocketStack{},
+		Key:             uint64(rand.Intn(1000000) + 1000000),
+		MaxCountInStack: maxConnect / 5000,
+		Increment:       0,
+	}
+
+	ws.Increment++
+	ws.Stack[ws.Increment] = &WebsocketStack{
+		Ws:         ws,
+		Register:   make(chan *WebsocketClient),
+		Broadcast:  make(chan *RequestWebsocket),
+		Unregister: make(chan *WebsocketClient),
+		Count:      0,
+		Increment:  0,
+		Key:        ws.Increment,
+	}
+
+	return ws
+}
+
+func (wsStack *WebsocketStack) RunHub() {
+	stack := ClientsStack{
+		Clients: make(map[uint64]*WebsocketClient),
+	}
+
+	for {
+		select {
+		case wsClient := <-wsStack.Register:
+			wsStack.Count++
+			stack.Clients[wsStack.Increment] = wsClient
+			log.Println("connection registered")
+
+		case wsRequest := <-wsStack.Broadcast:
+			log.Println("message received:", wsRequest.Message)
+
+			// Send the message to all clients
+			for _, wsClient := range stack.Clients {
+				if err := wsClient.Connect.WriteMessage(websocket.TextMessage, []byte(wsRequest.Message)); err != nil {
+					log.Println("write error:", err)
+
+					wsClient.Connect.WriteMessage(websocket.CloseMessage, []byte{})
+					wsClient.Connect.Close()
+
+					stack.DeleteClient(wsClient.Id)
+
+					if wsStack.Count > 1 {
+						wsStack.Count--
+					} else {
+						wsStack.Count = 0
+
+						if wsStack.Key > 1 {
+							wsStack.Delete()
+						}
+					}
+				}
+			}
+
+		case wsClient := <-wsStack.Unregister:
+			// Remove the client from the hub
+			stack.DeleteClient(wsClient.Id)
+
+			if wsStack.Count > 1 {
+				wsStack.Count--
+			} else {
+				wsStack.Count = 0
+
+				if wsStack.Key > 1 {
+					wsStack.Delete()
+				}
+			}
+
+			log.Println("connection unregistered")
+		}
+	}
+}
+
+func (ws *Websocket) NewWebsocketClient(connection *websocket.Conn) (*WebsocketClient, error) {
+	var stack *WebsocketStack
+	var wsClient *WebsocketClient
+	var err error
+
+	if _, ok := ws.Stack[1]; ok {
+		stack = ws.Stack[1]
+
+		for _, wsStack := range ws.Stack {
+			if wsStack.Count < stack.Count {
+				stack = wsStack
+			}
+		}
+	}
+
+	if stack == nil || stack.Count > 5000 {
+		ws.Increment++
+		ws.Stack[ws.Increment] = &WebsocketStack{
+			Ws:         ws,
+			Register:   make(chan *WebsocketClient),
+			Broadcast:  make(chan *RequestWebsocket),
+			Unregister: make(chan *WebsocketClient),
+			Count:      0,
+			Increment:  0,
+			Key:        ws.Increment,
+		}
+
+		stack = ws.Stack[ws.Increment]
+	}
+
+	wsClient, err = stack.NewWebsocketClient(connection)
+
+	return wsClient, err
+}
+
+func (wsStack *WebsocketStack) NewWebsocketClient(connection *websocket.Conn) (*WebsocketClient, error) {
+	var err error
+	var wsClient *WebsocketClient
+
+	wsStack.Increment++
+
+	increment := wsStack.Increment
+
+	wsClient, err = NewWebsocketClient(connection, wsStack.Key, increment)
+
+	return wsClient, err
+}
+
+func (ws *Websocket) Run() {
+	for _, wsStack := range ws.Stack {
+		go wsStack.RunHub()
+	}
+}
+
+func (ws *Websocket) Register(wsClient *WebsocketClient) {
+	if _, ok := ws.Stack[wsClient.Key]; ok {
+		ws.Stack[wsClient.Key].Register <- wsClient
+	}
+}
+
+func (ws *Websocket) Unregister(wsClient *WebsocketClient) {
+	if _, ok := ws.Stack[wsClient.Key]; ok {
+		ws.Stack[wsClient.Key].Unregister <- wsClient
+	}
+}
+
+func (ws *Websocket) Broadcast(wsClient *WebsocketClient, s string) {
+	wsRequest := NewRequestWebsocket(wsClient, s)
+
+	for _, wsStack := range ws.Stack {
+		wsStack.Broadcast <- wsRequest
+	}
+}
