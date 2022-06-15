@@ -30,9 +30,11 @@ type Websocket struct {
 	MaxCountInStack uint64
 	I               uint64
 	FuncRegister    func(wsClient *WebsocketClient)
-	FuncMessage     func(wsRequest *RequestWebsocket)
+	FuncMessage     func(wsRequest *WebsocketClient, message string)
 	FuncUnregister  func(wsClient *WebsocketClient)
 }
+
+var Websockets map[uint64]*Websocket
 
 func (stack *ClientsStack) DeleteClient(ClientKey uint64) {
 	if _, ok := stack.Clients[ClientKey]; ok {
@@ -70,20 +72,34 @@ func (wsStack *WebsocketStack) Delete() {
 	}
 }
 
-func NewWebsocket(maxConnect uint64, register func(wsClient *WebsocketClient), message func(wsRequest *RequestWebsocket), unregister func(wsClient *WebsocketClient)) *Websocket {
-	ws := &Websocket{
+func NewWebsocket(maxConnect uint64, register func(wsClient *WebsocketClient), message func(wsRequest *WebsocketClient, message string), unregister func(wsClient *WebsocketClient)) *Websocket {
+	if Websockets == nil {
+		Websockets = make(map[uint64]*Websocket)
+	}
+
+	key := uint64(rand.Intn(1000000) + 1000000)
+
+	Websockets[key] = &Websocket{
 		Stack:           map[uint64]*WebsocketStack{},
-		Key:             uint64(rand.Intn(1000000) + 1000000),
-		MaxCountInStack: maxConnect / 5000,
+		Key:             key,
+		MaxCountInStack: 5000,
 		I:               0,
 		FuncRegister:    register,
 		FuncMessage:     message,
 		FuncUnregister:  unregister,
 	}
 
-	ws.NewWebsocketStack()
+	countStack := int(maxConnect / 5000)
 
-	return ws
+	if countStack < 50 {
+		countStack = 50
+	}
+
+	for i := 0; i < countStack; i++ {
+		Websockets[key].NewWebsocketStack()
+	}
+
+	return Websockets[key]
 }
 
 func (wsStack *WebsocketStack) RunHub() {
@@ -145,16 +161,8 @@ func (ws *Websocket) NewWebsocketClient(connection *websocket.Conn) (*WebsocketC
 		for _, wsStack := range ws.Stack {
 			if wsStack.Count < stack.Count {
 				stack = wsStack
-			} else if wsStack.Count == 0 {
-				if stack != wsStack {
-					wsStack.Delete()
-				}
 			}
 		}
-	}
-
-	if stack == nil || stack.Count > 5000 {
-		stack = ws.NewWebsocketStack()
 	}
 
 	wsClient, err = stack.NewWebsocketClient(connection)
@@ -195,8 +203,8 @@ func (wsStack *WebsocketStack) NewWebsocketClient(connection *websocket.Conn) (*
 }
 
 func (ws *Websocket) Register(wsClient *WebsocketClient) {
-	if _, ok := ws.Stack[wsClient.StackKey]; ok {
-		ws.Stack[wsClient.StackKey].Register <- wsClient
+	if wsStack, ok := ws.Stack[wsClient.StackKey]; ok {
+		wsStack.Register <- wsClient
 
 		ws.FuncRegister(wsClient)
 	}
@@ -204,15 +212,13 @@ func (ws *Websocket) Register(wsClient *WebsocketClient) {
 
 func (ws *Websocket) Broadcast(wsClient *WebsocketClient, s string) {
 	if _, ok := ws.Stack[wsClient.StackKey]; ok {
-		wsRequest := NewRequestWebsocket(ws, ws.Stack[wsClient.WsKey], wsClient, s)
-
-		ws.FuncMessage(wsRequest)
+		ws.FuncMessage(wsClient, s)
 	}
 }
 
 func (ws *Websocket) Unregister(wsClient *WebsocketClient) {
-	if _, ok := ws.Stack[wsClient.StackKey]; ok {
-		ws.Stack[wsClient.StackKey].Unregister <- wsClient
+	if wsStack, ok := ws.Stack[wsClient.StackKey]; ok {
+		wsStack.Unregister <- wsClient
 
 		ws.FuncUnregister(wsClient)
 	}
@@ -222,16 +228,20 @@ func (ws *Websocket) SendAll(message string) {
 	wsBroadcast := NewBroadcastWebsocket(0, 0, 0, message)
 
 	for _, wsStack := range ws.Stack {
-		wsStack.Broadcast <- wsBroadcast
+		if wsStack.Count > 0 {
+			wsStack.Broadcast <- wsBroadcast
+		}
 	}
 }
 
 func (ws *Websocket) Send(wsKey uint64, stackKey uint64, clientKey uint64, message string) {
 	if wsKey > 0 && stackKey > 0 && clientKey > 0 && ws.Key == wsKey {
 		if wsStack, ok := ws.Stack[stackKey]; ok {
-			wsBroadcast := NewBroadcastWebsocket(wsKey, stackKey, clientKey, message)
+			if wsStack.Count > 0 {
+				wsBroadcast := NewBroadcastWebsocket(wsKey, stackKey, clientKey, message)
 
-			wsStack.Broadcast <- wsBroadcast
+				wsStack.Broadcast <- wsBroadcast
+			}
 		}
 	}
 }

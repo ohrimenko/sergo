@@ -1,7 +1,7 @@
 package ws
 
 import (
-	"log"
+	"fmt"
 
 	"github.com/ohrimenko/sergo/controllers"
 )
@@ -16,16 +16,18 @@ func NewControllerMain() ControllerMain {
 	return controller
 }
 
-func (сontroller ControllerMain) Register(wsClient *controllers.WebsocketClient) {
-	log.Println("connection registered: ", wsClient.Key())
+func (сontroller ControllerMain) OnConnect(wsClient *controllers.WebsocketClient) {
+	wsClient.SendAll(fmt.Sprint("connection registered: ", wsClient.Key()))
+	wsClient.Key()
 }
 
-func (сontroller ControllerMain) Message(wsRequest *controllers.RequestWebsocket) {
-	wsRequest.Send(wsRequest.WsClient.Key(), "send...")
-	wsRequest.SendAll(wsRequest.Message)
-	log.Println("Send: ", wsRequest.WsClient.Key(), " - ", wsRequest.Message)
+func (сontroller ControllerMain) OnMessage(wsClient *controllers.WebsocketClient, message string) {
+	wsClient.Send(wsClient.Key(), "send...")
+	wsClient.SendAll(message)
+	wsClient.Key()
 }
 
-func (сontroller ControllerMain) Unregister(wsClient *controllers.WebsocketClient) {
-	log.Println("connection unregistered: ", wsClient.Key())
+func (сontroller ControllerMain) OnClose(wsClient *controllers.WebsocketClient) {
+	wsClient.SendAll(fmt.Sprint("connection unregistered: ", wsClient.Key()))
+	wsClient.Key()
 }

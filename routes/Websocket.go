@@ -13,7 +13,7 @@ import (
 
 func (route Route) Websocket(app *fiber.App) {
 	wsControllerMain := ws.NewControllerMain()
-	ws := controllers.NewWebsocket(1000000, wsControllerMain.Register, wsControllerMain.Message, wsControllerMain.Unregister)
+	ws := controllers.NewWebsocket(1000000, wsControllerMain.OnConnect, wsControllerMain.OnMessage, wsControllerMain.OnClose)
 
 	app.Static("/", "./public/websocket/home.html", fiber.Static{
 		Compress:      true,
